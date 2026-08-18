@@ -27,12 +27,9 @@ jobs:
         run: |
           pip install -r scripts/requirements.txt
 
-      - name: Get Java PR diff
+      - name: Get Java diff against main
         run: |
-          git diff \
-            origin/${{ github.base_ref }}...HEAD \
-            -- '*.java' \
-            > pr.diff
+          git diff origin/main...HEAD -- '*.java' > pr.diff
 
       - name: AI review
         env:
