@@ -74,21 +74,30 @@ Return ONLY valid JSON:
 
 {{
   "findings": [
-    {{
-      "severity": "HIGH|MEDIUM|LOW",
+    {
+    "severity": "HIGH|MEDIUM|LOW",
       "file": "src/main/java/example/CourseService.java",
       "line": 25,
-      "title": "Short title",
-      "body": "Explain the issue and provide a concrete suggestion."
-    }}
+      "title": "Unnecessary local variable",
+      "problem": "The local variable is only used immediately in the return statement and adds no useful context.",
+      "solution": "Return the repository call directly.",
+      "suggested_code": "return repository.createCourse(course);"
+    }
   ]
 }}
 
 Important:
+
 - The line number MUST be a line from the changed Java code.
 - Only comment on changed lines.
+- Explain the actual problem, not just the rule being violated.
+- Always provide a concrete solution.
+- When appropriate, provide replacement Java code in suggested_code.
+- suggested_code should contain ONLY the replacement code, without markdown fences.
+- If showing code would not be appropriate, set suggested_code to null.
+- Do not suggest a solution unless you are confident it is an improvement.
 - If there is no meaningful improvement, return:
-  {{"findings": []}}
+  {"findings": []}
 """
 
 
@@ -142,14 +151,27 @@ def create_review_comments(result):
     comments = []
 
     for finding in findings:
+        solution = finding.get("solution", "")
+        suggested_code = finding.get("suggested_code")
+
+        body = (
+            f"**🤖 {finding['severity']} — {finding['title']}**\n\n"
+            f"**Problem**\n"
+            f"{finding['problem']}\n\n"
+            f"**Solution**\n"
+            f"{solution}"
+        )
+
+        if suggested_code:
+            body += (
+                "\n\n**Suggested code**\n"
+                f"```java\n{suggested_code}\n```"
+            )
+
         comments.append({
             "path": finding["file"],
             "line": finding["line"],
-            "body": (
-                f"**{finding['severity']} — "
-                f"{finding['title']}**\n\n"
-                f"{finding['body']}"
-            ),
+            "body": body,
         })
 
     # GitHub requires the commit SHA for an inline review.
