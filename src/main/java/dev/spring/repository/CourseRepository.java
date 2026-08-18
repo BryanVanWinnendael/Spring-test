@@ -13,9 +13,7 @@ public class CourseRepository implements CrudRepository<Course> {
     @Override
     public List<Course> findAll() {
         Course springCourse = new Course(1, "Spring", "Learn Spring", "https://www.spring.io");
-
         courses.add(springCourse);
-
         return courses;
     }
 
