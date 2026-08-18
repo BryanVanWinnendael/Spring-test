@@ -1,7 +1,6 @@
 import argparse
 import json
 import os
-import subprocess
 from github import Github
 from google import genai
 from google.genai import types
@@ -25,10 +24,10 @@ def get_rules():
 
 def build_prompt(diff, rules):
     return f"""
-You are an experienced senior Java and Spring Boot developer reviewing
-a pull request.
+You are an experienced senior Java and Spring Boot developer performing
+a pull request code review.
 
-Your job is to find meaningful opportunities to improve code that
+Your purpose is to find meaningful opportunities to improve code that
 already works.
 
 Only report a finding when an experienced developer would reasonably
@@ -43,6 +42,7 @@ Do NOT report:
 - changes that only reduce the number of lines
 - subjective personal preferences
 - hypothetical future requirements
+- minor differences in coding style
 
 Look specifically for:
 
@@ -50,66 +50,92 @@ Look specifically for:
 2. Duplicated business logic
 3. Poor separation of responsibilities
 4. Unnecessary abstractions
-5. Non-idiomatic Java where the alternative is substantially clearer
-6. Spring Boot architectural problems
-7. Incorrect Controller/Service/Repository responsibilities
-8. Unnecessary database/repository calls
-9. Difficult-to-test code
-10. Existing project functionality that should be reused
-11. Code that could be substantially simpler without losing clarity
+5. Missing abstractions where duplication is significant
+6. Non-idiomatic Java where the alternative is substantially clearer
+7. Spring Boot architectural problems
+8. Incorrect Controller/Service/Repository responsibilities
+9. Unnecessary database/repository calls
+10. Difficult-to-test code
+11. Existing project functionality that should be reused
+12. Code that could be substantially simpler without losing clarity
+13. Code that could be made significantly more readable or maintainable
 
 Project-specific rules:
 
---- BEGIN RULES ---
-{rules}
---- END RULES ---
+--- BEGIN PROJECT RULES ---
 
-Review ONLY these Java changes:
+{rules}
+
+--- END PROJECT RULES ---
+
+Review ONLY the Java changes below:
 
 --- BEGIN DIFF ---
+
 {diff}
+
 --- END DIFF ---
 
-Return ONLY valid JSON:
+Return ONLY valid JSON.
+
+Use exactly this structure:
 
 {{
   "findings": [
-    {
-    "severity": "HIGH|MEDIUM|LOW",
+    {{
+      "severity": "HIGH|MEDIUM|LOW",
       "file": "src/main/java/example/CourseService.java",
       "line": 25,
-      "title": "Unnecessary local variable",
-      "problem": "The local variable is only used immediately in the return statement and adds no useful context.",
-      "solution": "Return the repository call directly.",
+      "title": "Short description of the issue",
+      "problem": "Explain clearly what is wrong or unnecessarily complicated.",
+      "solution": "Explain what the developer should do instead.",
       "suggested_code": "return repository.createCourse(course);"
-    }
+    }}
   ]
 }}
 
-Important:
+Rules for findings:
 
-- The line number MUST be a line from the changed Java code.
-- Only comment on changed lines.
-- Explain the actual problem, not just the rule being violated.
+- The file MUST be a Java file from the supplied diff.
+- The line MUST be a changed line in the supplied diff.
+- Only comment on code that was changed in this PR.
+- Do not comment on unchanged surrounding code.
+- Always explain the actual problem.
 - Always provide a concrete solution.
-- When appropriate, provide replacement Java code in suggested_code.
-- suggested_code should contain ONLY the replacement code, without markdown fences.
-- If showing code would not be appropriate, set suggested_code to null.
-- Do not suggest a solution unless you are confident it is an improvement.
-- If there is no meaningful improvement, return:
-  {"findings": []}
+- When appropriate, provide replacement Java code.
+- suggested_code must contain ONLY Java code.
+- Do not include markdown code fences inside suggested_code.
+- If code replacement is not appropriate, use null for suggested_code.
+- Do not suggest a solution unless it is genuinely better.
+- Prefer simple solutions over introducing unnecessary abstractions.
+- Follow the existing architecture and conventions.
+- Do not introduce design patterns just because they exist.
+- Do not suggest changes merely because another implementation is possible.
+
+Severity:
+
+HIGH:
+A significant maintainability, architecture, or design problem that
+should probably be addressed in this PR.
+
+MEDIUM:
+A meaningful improvement that would make the code substantially better,
+but the current implementation is still acceptable.
+
+LOW:
+A useful but optional improvement.
+
+If there are no meaningful improvements, return:
+
+{{"findings": []}}
 """
-
-
-def get_diff(path):
-    return read_file(path)
 
 
 def review_with_gemini(diff, rules):
     api_key = os.environ.get("GEMINI_API_KEY")
 
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is not set")
+        raise RuntimeError("GEMINI_API_KEY is not set.")
 
     client = genai.Client(api_key=api_key)
 
@@ -125,39 +151,45 @@ def review_with_gemini(diff, rules):
     return json.loads(response.text)
 
 
-def get_github():
-    token = os.environ.get("GITHUB_TOKEN")
+def create_github_review(result):
+    github_token = os.environ.get("GITHUB_TOKEN")
 
-    if not token:
-        raise RuntimeError("GITHUB_TOKEN is not set")
+    if not github_token:
+        raise RuntimeError("GITHUB_TOKEN is not set.")
 
-    return Github(token)
+    repository_name = os.environ.get("GITHUB_REPOSITORY")
+    pr_number = os.environ.get("PR_NUMBER")
 
+    if not repository_name:
+        raise RuntimeError("GITHUB_REPOSITORY is not set.")
 
-def create_review_comments(result):
-    repository_name = os.environ["GITHUB_REPOSITORY"]
-    pr_number = int(os.environ["PR_NUMBER"])
+    if not pr_number:
+        raise RuntimeError("PR_NUMBER is not set.")
 
-    github = get_github()
+    github = Github(github_token)
+
     repository = github.get_repo(repository_name)
-    pull_request = repository.get_pull(pr_number)
+    pull_request = repository.get_pull(int(pr_number))
 
     findings = result.get("findings", [])
 
     if not findings:
-        print("AI found no meaningful improvements.")
+        print("AI review found no meaningful improvements.")
         return
 
     comments = []
 
     for finding in findings:
+        severity = finding.get("severity", "LOW")
+        title = finding.get("title", "Potential improvement")
+        problem = finding.get("problem", "")
         solution = finding.get("solution", "")
         suggested_code = finding.get("suggested_code")
 
         body = (
-            f"**🤖 {finding['severity']} — {finding['title']}**\n\n"
+            f"**🤖 {severity} — {title}**\n\n"
             f"**Problem**\n"
-            f"{finding['problem']}\n\n"
+            f"{problem}\n\n"
             f"**Solution**\n"
             f"{solution}"
         )
@@ -168,46 +200,75 @@ def create_review_comments(result):
                 f"```java\n{suggested_code}\n```"
             )
 
-        comments.append({
-            "path": finding["file"],
-            "line": finding["line"],
-            "body": body,
-        })
+        comments.append(
+            {
+                "path": finding["file"],
+                "line": finding["line"],
+                "body": body,
+            }
+        )
 
-    # GitHub requires the commit SHA for an inline review.
     commit = repository.get_commit(pull_request.head.sha)
 
-    pull_request.create_review(
-        commit=commit,
-        body="### 🤖 AI Code Review\n\n"
-             f"Found {len(comments)} potential improvement(s).",
-        event="COMMENT",
-        comments=comments,
+    review_body = (
+        "## 🤖 AI Code Review\n\n"
+        f"Found **{len(comments)}** potential improvement"
+        f"{'' if len(comments) == 1 else 's'}.\n\n"
+        "These suggestions are advisory and should be evaluated by the "
+        "developer."
     )
 
-    print(f"Created {len(comments)} PR comments.")
+    try:
+        pull_request.create_review(
+            commit=commit,
+            body=review_body,
+            event="COMMENT",
+            comments=comments,
+        )
+
+        print(f"Created GitHub review with {len(comments)} comment(s).")
+
+    except Exception as error:
+        print("Failed to create GitHub review.")
+        print(error)
+
+        print("\nFindings returned by Gemini:")
+        print(json.dumps(result, indent=2))
+
+        raise
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("diff")
+    parser = argparse.ArgumentParser(
+        description="Review Java changes using Gemini and post comments to GitHub."
+    )
+
+    parser.add_argument(
+        "diff",
+        help="Path to the git diff file.",
+    )
+
     args = parser.parse_args()
 
-    diff = get_diff(args.diff)
+    diff = read_file(args.diff)
 
     if not diff.strip():
         print("No Java changes found.")
         return
 
-    rules = get_rules()
-
     print("Sending Java changes to Gemini...")
 
-    result = review_with_gemini(diff, rules)
+    rules = get_rules()
 
+    result = review_with_gemini(
+        diff=diff,
+        rules=rules,
+    )
+
+    print("\nGemini response:")
     print(json.dumps(result, indent=2))
 
-    create_review_comments(result)
+    create_github_review(result)
 
 
 if __name__ == "__main__":
