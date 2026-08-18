@@ -20,7 +20,7 @@ public class CourseService implements CrudService<Course> {
 
     @Override
     public Course create(Course course) {
-        return null;
+        return repository.createCourse(course);
     }
 
     @Override
