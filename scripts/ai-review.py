@@ -6,7 +6,7 @@ from google import genai
 from google.genai import types
 from pathlib import Path
 
-MODEL = "gemini-2.5-flash"
+MODEL = "gemini-3.6-flash"
 
 
 def read_file(path: str) -> str:
